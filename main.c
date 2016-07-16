@@ -10,7 +10,7 @@
 //#include <sys/types.h>
 //#include <sys/file.h> // flock
 
-#include "fd_pass1.h"
+#include "fd_pass.h"
 #include "worker.h"
 
 #define NUM_WORKER_THREADS 3
@@ -27,6 +27,7 @@ static int worker_status [ NUM_WORKER_THREADS ]; // 1 - ready, 0 - not
 static pid_t child_pids  [ NUM_WORKER_THREADS ];
 static worker_listener worker_listeners[ NUM_WORKER_THREADS ];
 static ev_io server_socket_listener;
+int num_threads_ready;
 
 static void master_sig_chld_catcher( int signo ) {
     int status;
@@ -51,9 +52,15 @@ static void
 worker_read_cb( struct ev_loop *loop, ev_io *w, int revents ) {
     char msg;
     int worker_number = ((worker_listener*)w)->worker_number;
-    if( recv( w->fd, &msg, 1, MSG_NOSIGNAL ) > 1 ) {
-        if( msg == 1 )
+    if( recv( w->fd, &msg, 1, MSG_NOSIGNAL ) > 0 ) {
+        if( msg == 1 ) {
+            printf("Worker %d says it's ready\n", worker_number );
+            if( worker_status[ worker_number ] == 0 )
+                ++num_threads_ready;
             worker_status[ worker_number ] = 1;
+            if( num_threads_ready == 1 )
+                ev_io_start( loop, &server_socket_listener );
+        }
     }
 }
 
@@ -70,15 +77,18 @@ server_socket_read_cb( struct ev_loop *loop, ev_io *w, int revents ) {
     }
     int client_socket = accept( server_socket, 0, 0 );
     fprintf( stderr, "Passing it to worker %d\n", next_worker );
+    worker_status[ next_worker ] = 0; // now it's busy untl it says the opposit
+    --num_threads_ready;
+    if( num_threads_ready == 0 )
+        ev_io_stop( loop, &server_socket_listener );
     send_file_descriptor( master_sockets[ next_worker ], client_socket );
-    shutdown( client_socket, SHUT_RDWR );
     close( client_socket );
 }
 
 int main( int argc, char **argv ) {
     struct ev_loop *loop = EV_DEFAULT;
 
-
+    num_threads_ready = 0;
     int worker_sockets[ NUM_WORKER_THREADS ];
     setsid();
 
@@ -107,6 +117,7 @@ int main( int argc, char **argv ) {
             // parent
             close( worker_sockets[ worker_number ] );
 
+            worker_listeners[ worker_number ].worker_number = worker_number;
             ev_io_init( &( worker_listeners[ worker_number ].io ),
                     worker_read_cb, master_sockets[ worker_number ], EV_READ );
             ev_io_start( loop, &( worker_listeners[ worker_number ].io ) );
@@ -129,6 +140,7 @@ int main( int argc, char **argv ) {
     signal( SIGTERM, master_sig_term_catcher );
     signal( SIGSEGV, master_sig_term_catcher );
     signal( SIGCHLD, master_sig_chld_catcher );
+    signal( SIGPIPE, master_sig_term_catcher );
     listen( server_socket, SOMAXCONN );
 
     ev_io_init( &server_socket_listener,

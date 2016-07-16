@@ -6,7 +6,7 @@
 #include <string.h>
 #include <signal.h>
 
-#include "fd_pass1.h"
+#include "fd_pass.h"
 
 #define REQ_BUF_SZ 1024
 #define ANS_BUF_SZ 1024
@@ -69,12 +69,14 @@ void work( int control_socket, int worker_number ) {
     while( 1 ) { 
         char ready_code = 1;
         send( control_socket, &ready_code, 1, MSG_NOSIGNAL );
-        int client_socket = recv_file_descriptor( control_socket );
+        client_socket = recv_file_descriptor( control_socket );
         if( client_socket < 0 ) {
             fprintf( stderr, "Worker %d: Failed receiving client socket!\n", 
                     worker_number );
             continue;
         }
+        fprintf( stderr, "Worker %d: Received client socket fd: %d\n", 
+                    worker_number, client_socket );
         char *req_file_name = get_file_name( client_socket );
         if( req_file_name == NULL ) {
             fprintf( stderr, "Requested file not found! (404)\n" );
@@ -99,6 +101,8 @@ void work( int control_socket, int worker_number ) {
             send_header( 404 );
         }
         free( req_file_name );
+        shutdown( client_socket, SHUT_RDWR );
+        close( client_socket );
     }
 }
 
