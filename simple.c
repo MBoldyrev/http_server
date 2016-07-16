@@ -90,3 +90,30 @@ void work( int client_socket ) {
     free( req_file_name );
 }
 
+int main( int argc, char **argv ) {
+    server_socket = socket(
+            AF_INET,
+            SOCK_STREAM,
+            0 );
+    struct sockaddr_in server_sockaddr;
+    server_sockaddr.sin_family = AF_INET;
+    server_sockaddr.sin_port = htons( 6666 );
+    server_sockaddr.sin_addr.s_addr = htonl( INADDR_ANY );
+    bind( server_socket, 
+            (struct sockaddr *)(&server_sockaddr),
+            sizeof( server_sockaddr ) );
+    signal( SIGINT, my_sig );
+    signal( SIGTERM, my_sig );
+    signal( SIGSEGV, my_sig );
+    listen( server_socket, SOMAXCONN );
+
+    while(1) {
+        int client_socket = accept( server_socket, 0, 0 );
+        fprintf( stderr, "Got a connection\n" );
+        work( client_socket );
+        shutdown( client_socket, SHUT_RDWR );
+        close( client_socket );
+    }
+
+    return 0;
+}
