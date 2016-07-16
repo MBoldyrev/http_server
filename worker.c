@@ -6,21 +6,23 @@
 #include <string.h>
 #include <signal.h>
 
-#include "fd_pass.h"
+#include "fd_pass1.h"
 
 #define REQ_BUF_SZ 1024
 #define ANS_BUF_SZ 1024
 #define FILE_READ_BUF_SZ 1024
 
-int server_socket;
+int client_socket;
 
-void my_sig( int signo ) {
-    shutdown( server_socket, SHUT_RDWR );
-    close( server_socket );
+static void my_sig( int signo ) {
+    if( client_socket >= 0 ) {
+        shutdown( client_socket, SHUT_RDWR );
+        close( client_socket );
+    }
     exit(0);
 }
 
-int send_header( int client_socket, int http_code ) {
+static int send_header( int http_code ) {
     char *ans = (char*)malloc( REQ_BUF_SZ );
     strcpy( ans, "HTTP/1.0 " );
     switch( http_code ) {
@@ -42,7 +44,7 @@ int send_header( int client_socket, int http_code ) {
     return 0;
 }
 
-char *get_file_name( int client_socket ) {
+static char *get_file_name() {
     char *buf = (char*)malloc( REQ_BUF_SZ );
     ssize_t num_read = recv( client_socket, buf, REQ_BUF_SZ, MSG_NOSIGNAL );
     char *space1 = index( buf, ' ' );
@@ -63,30 +65,40 @@ char *get_file_name( int client_socket ) {
     return NULL;
 }
 
-void work( int client_socket ) {
-    char *req_file_name = get_file_name( client_socket );
-    if( req_file_name == NULL ) {
-        fprintf( stderr, "Requested file not found! (404)\n" );
-        send_header( client_socket, 404 );
-        return;
-    }
-    FILE *req_file = fopen( req_file_name, "r" );
-    if( req_file != NULL ) {
-        fprintf( stderr, "Sending the file (200)\n" );
-        send_header( client_socket, 200 );
-        char *buf = (char*)malloc( FILE_READ_BUF_SZ );
-        size_t num_read;
-        while( 0 != ( num_read = 
-                    fread( buf, 1, FILE_READ_BUF_SZ, req_file ) ) ) {
-            send( client_socket, buf, num_read, MSG_NOSIGNAL );
+void work( int control_socket, int worker_number ) {
+    while( 1 ) { 
+        char ready_code = 1;
+        send( control_socket, &ready_code, 1, MSG_NOSIGNAL );
+        int client_socket = recv_file_descriptor( control_socket );
+        if( client_socket < 0 ) {
+            fprintf( stderr, "Worker %d: Failed receiving client socket!\n", 
+                    worker_number );
+            continue;
         }
-        fclose( req_file );
-        free( buf );
+        char *req_file_name = get_file_name( client_socket );
+        if( req_file_name == NULL ) {
+            fprintf( stderr, "Requested file not found! (404)\n" );
+            send_header( 404 );
+            return;
+        }
+        FILE *req_file = fopen( req_file_name, "r" );
+        if( req_file != NULL ) {
+            fprintf( stderr, "Sending the file (200)\n" );
+            send_header( 200 );
+            char *buf = (char*)malloc( FILE_READ_BUF_SZ );
+            size_t num_read;
+            while( 0 != ( num_read = 
+                        fread( buf, 1, FILE_READ_BUF_SZ, req_file ) ) ) {
+                send( client_socket, buf, num_read, MSG_NOSIGNAL );
+            }
+            fclose( req_file );
+            free( buf );
+        }
+        else {
+            fprintf( stderr, "Requested file not found! (404)\n" );
+            send_header( 404 );
+        }
+        free( req_file_name );
     }
-    else {
-        fprintf( stderr, "Requested file not found! (404)\n" );
-        send_header( client_socket, 404 );
-    }
-    free( req_file_name );
 }
 

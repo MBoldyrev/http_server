@@ -5,70 +5,114 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
-#include <sys/file.h> // flock
+#include <ev.h>
+#include <sys/wait.h>
+//#include <sys/types.h>
+//#include <sys/file.h> // flock
 
 #include "fd_pass1.h"
+#include "worker.h"
 
 #define NUM_WORKER_THREADS 3
 
-int server_socket;
+typedef struct {
+    ev_io io;
+    int worker_number;
+}
+worker_listener;
 
-void my_sig( int signo ) {
+static int server_socket;
+static int master_sockets[ NUM_WORKER_THREADS ];
+static int worker_status [ NUM_WORKER_THREADS ]; // 1 - ready, 0 - not
+static pid_t child_pids  [ NUM_WORKER_THREADS ];
+static worker_listener worker_listeners[ NUM_WORKER_THREADS ];
+static ev_io server_socket_listener;
+
+static void master_sig_chld_catcher( int signo ) {
+    int status;
+    pid_t p = wait( &status );
+    for( int worker_number = 0; worker_number < NUM_WORKER_THREADS; ++worker_number ) {
+        if( p == child_pids[ worker_number ] ) {
+            fprintf( stderr, "Got SIGCHLD from %d worker\n", worker_number );
+            shutdown( master_sockets[ worker_number ], SHUT_RDWR );
+            close( master_sockets[ worker_number ] );
+        }
+    }
+}
+
+static void master_sig_term_catcher( int signo ) {
     shutdown( server_socket, SHUT_RDWR );
     close( server_socket );
+    kill( 0, SIGTERM ); // kill process group
     exit(0);
 }
 
+static void
+worker_read_cb( struct ev_loop *loop, ev_io *w, int revents ) {
+    char msg;
+    int worker_number = ((worker_listener*)w)->worker_number;
+    if( recv( w->fd, &msg, 1, MSG_NOSIGNAL ) > 1 ) {
+        if( msg == 1 )
+            worker_status[ worker_number ] = 1;
+    }
+}
+
+static void
+server_socket_read_cb( struct ev_loop *loop, ev_io *w, int revents ) {
+    fprintf( stderr, "Got a connection\n" );
+    int next_worker = -1;
+    for( int worker_number = 0; worker_number < NUM_WORKER_THREADS;
+            ++worker_number ) {
+        if( worker_status[ worker_number ] == 1 ) {
+            next_worker = worker_number;
+            break;
+        }
+    }
+    int client_socket = accept( server_socket, 0, 0 );
+    fprintf( stderr, "Passing it to worker %d\n", next_worker );
+    send_file_descriptor( master_sockets[ next_worker ], client_socket );
+    shutdown( client_socket, SHUT_RDWR );
+    close( client_socket );
+}
+
 int main( int argc, char **argv ) {
+    struct ev_loop *loop = EV_DEFAULT;
 
-    int master_sockets[ NUM_WORKER_THREADS ];
+
     int worker_sockets[ NUM_WORKER_THREADS ];
-    int child_pids[ NUM_WORKER_THREADS ];
+    setsid();
 
-    for( int w_thr_num = 0; w_thr_num < NUM_WORKER_THREADS; ++w_thr_num ) {
+    for( int worker_number = 0; worker_number < NUM_WORKER_THREADS; ++worker_number ) {
+        worker_status[ worker_number ] = 0; // not ready
         int fd[2];
         if( 0 != socketpair( AF_UNIX, SOCK_STREAM, 0, fd ) ) {
             fprintf( stderr, "Failed to create UNIX socket for worker %d\n", 
-                    w_thr_num );
+                    worker_number );
             exit( 1 );
         }
-        master_sockets[w_thr_num] = fd[0];
-        worker_sockets[w_thr_num] = fd[1];
+        master_sockets[worker_number] = fd[0];
+        worker_sockets[worker_number] = fd[1];
 
-        if( 0 == ( child_pids[ w_thr_num ] = fork() ) ) {
+        if( 0 == ( child_pids[ worker_number ] = fork() ) ) {
             // child
-            close( master_sockets[ w_thr_num ] );
+            close( master_sockets[ worker_number ] );
 
-            int fd = recv_file_descriptor( worker_sockets[ w_thr_num ] );
-            if( fd <= 0 ) {
-                printf( "Worker %d could not recv file descriptor!\n", w_thr_num );
-            }
-            else {
-                char buf[50];
-                sprintf( buf, "Hello from worker %d!\n", w_thr_num );
-                flock( fd, LOCK_EX );
-                write( fd, buf, strlen( buf ) );
-                flock( fd, LOCK_UN );
-                close( fd );
-            }
+            work( worker_sockets[ worker_number ], worker_number );
 
-            shutdown( worker_sockets[ w_thr_num ], SHUT_RDWR );
-            close( worker_sockets[ w_thr_num ] );
+            shutdown( worker_sockets[ worker_number ], SHUT_RDWR );
+            close( worker_sockets[ worker_number ] );
             exit(0);
         }
         else {
             // parent
-            close( worker_sockets[ w_thr_num ] );
+            close( worker_sockets[ worker_number ] );
 
-            int fd = open( "/tmp/fdpass", O_WRONLY|O_CREAT|O_TRUNC|O_APPEND );
-            send_file_descriptor( master_sockets[ w_thr_num ], fd );
-            close(fd);
+            ev_io_init( &( worker_listeners[ worker_number ].io ),
+                    worker_read_cb, master_sockets[ worker_number ], EV_READ );
+            ev_io_start( loop, &( worker_listeners[ worker_number ].io ) );
 
-            shutdown( master_sockets[ w_thr_num ], SHUT_RDWR );
-            close( master_sockets[ w_thr_num ] );
         }
     }
-    exit(0);
 
     server_socket = socket(
             AF_INET,
@@ -81,18 +125,17 @@ int main( int argc, char **argv ) {
     bind( server_socket, 
             (struct sockaddr *)(&server_sockaddr),
             sizeof( server_sockaddr ) );
-    signal( SIGINT, my_sig );
-    signal( SIGTERM, my_sig );
-    signal( SIGSEGV, my_sig );
+    signal( SIGINT,  master_sig_term_catcher );
+    signal( SIGTERM, master_sig_term_catcher );
+    signal( SIGSEGV, master_sig_term_catcher );
+    signal( SIGCHLD, master_sig_chld_catcher );
     listen( server_socket, SOMAXCONN );
 
-    while(1) {
-        int client_socket = accept( server_socket, 0, 0 );
-        fprintf( stderr, "Got a connection\n" );
-        //work( client_socket );
-        shutdown( client_socket, SHUT_RDWR );
-        close( client_socket );
-    }
+    ev_io_init( &server_socket_listener,
+            server_socket_read_cb, server_socket, EV_READ );
+    ev_io_start( loop, &server_socket_listener );
+
+    ev_run( loop, 0 );
 
     return 0;
 }
