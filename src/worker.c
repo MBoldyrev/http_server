@@ -13,6 +13,7 @@
 #define FILE_READ_BUF_SZ 1024
 
 int client_socket;
+FILE *logfile;
 
 static void worker_sig_term_catcher( int signo ) {
     if( client_socket >= 0 ) {
@@ -60,9 +61,7 @@ static char *get_file_name() {
         if( space2 != NULL ) {
             *space2 = 0;
             strcpy( buf, space1 );
-#ifndef DEBUG_OUTPUT
-            fprintf( stderr, "Requested file: %s\n", buf );
-#endif
+            fprintf( logfile, "Requested file: %s\n", buf );
             return buf;
 
         }
@@ -82,29 +81,21 @@ void work( int control_socket, int worker_number ) {
         send( control_socket, &ready_code, 1, MSG_NOSIGNAL );
         client_socket = recv_file_descriptor( control_socket );
         if( client_socket < 0 ) {
-#ifndef DEBUG_OUTPUT
-            fprintf( stderr, "Worker %d: Failed receiving client socket!\n", 
+            fprintf( logfile, "Worker %d: Failed receiving client socket!\n", 
                     worker_number );
-#endif
             continue;
         }
-#ifndef DEBUG_OUTPUT
-        fprintf( stderr, "Worker %d: Received client socket fd: %d\n", 
+        fprintf( logfile, "Worker %d: Received client socket fd: %d\n", 
                     worker_number, client_socket );
-#endif
         char *req_file_name = get_file_name( client_socket );
         if( req_file_name == NULL ) {
-#ifndef DEBUG_OUTPUT
-            fprintf( stderr, "Requested file not found! (404)\n" );
-#endif
+            fprintf( logfile, "Requested file not found! (404)\n" );
             send_header( 404 );
             return;
         }
         FILE *req_file = fopen( req_file_name, "r" );
         if( req_file != NULL ) {
-#ifndef DEBUG_OUTPUT
-            fprintf( stderr, "Sending the file (200)\n" );
-#endif
+            fprintf( logfile, "Sending the file (200)\n" );
             send_header( 200 );
             char *buf = (char*)malloc( FILE_READ_BUF_SZ );
             size_t num_read;
@@ -116,9 +107,7 @@ void work( int control_socket, int worker_number ) {
             free( buf );
         }
         else {
-#ifndef DEBUG_OUTPUT
-            fprintf( stderr, "Requested file not found! (404)\n" );
-#endif
+            fprintf( logfile, "Requested file not found! (404)\n" );
             send_header( 404 );
         }
         free( req_file_name );
