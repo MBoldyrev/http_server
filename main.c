@@ -7,6 +7,8 @@
 #include <signal.h>
 #include <ev.h>
 #include <sys/wait.h>
+#include <getopt.h>
+#include <arpa/inet.h>
 //#include <sys/types.h>
 //#include <sys/file.h> // flock
 
@@ -85,7 +87,66 @@ server_socket_read_cb( struct ev_loop *loop, ev_io *w, int revents ) {
     close( client_socket );
 }
 
+
+
+
 int main( int argc, char **argv ) {
+    int option;
+    char correct_invocation = 3;
+	opterr = 0;
+    struct sockaddr_in server_sockaddr;
+    server_sockaddr.sin_family = AF_INET;
+    server_sockaddr.sin_addr.s_addr = htonl( INADDR_ANY );
+
+    while (1) {
+        int option_index = 0;
+        static struct option long_options[] = {
+            {"host",       required_argument, 0,  'h' },
+            {"port",       required_argument, 0,  'p' },
+            {"directory",  required_argument, 0,  'd' }
+        };
+
+        option = getopt_long(argc, argv, "h:p:d:",
+                 long_options, &option_index);
+        if( option == -1 )
+            break; // all options parsed
+
+        switch( option ) {
+            case 'h':
+                if( 0 == inet_aton( optarg, &server_sockaddr.sin_addr ) ) {
+                    fprintf( stderr, "Bad ip address specification!\n" );
+                    exit(1);
+                }
+                correct_invocation &= ~1; // first byte for good ip
+                break;
+			case 'p':
+                {
+                int port = atoi( optarg );
+                if( port <= 0 ) {
+                    fprintf( stderr, "Bad port specification!\n" );
+                    exit(1);
+                }
+                server_sockaddr.sin_port = htons( port );
+                correct_invocation &= ~2; // second byte for good port
+                break;
+                }
+			case 'd':
+                if( -1 == chdir( optarg ) ) {
+                    fprintf( stderr, "Bad working directory specification!\n" );
+                    exit(1);
+                }
+				break;
+            case '?':
+            default: 
+                correct_invocation |= 2;
+        }
+
+	} // end of option parcing cycle
+    if( 0 != correct_invocation ) {
+        fprintf( stderr, "Missing mandatory options!\n" );
+        exit(1);
+    }
+
     struct ev_loop *loop = EV_DEFAULT;
 
     num_threads_ready = 0;
@@ -129,10 +190,6 @@ int main( int argc, char **argv ) {
             AF_INET,
             SOCK_STREAM,
             0 );
-    struct sockaddr_in server_sockaddr;
-    server_sockaddr.sin_family = AF_INET;
-    server_sockaddr.sin_port = htons( 6666 );
-    server_sockaddr.sin_addr.s_addr = htonl( INADDR_ANY );
     bind( server_socket, 
             (struct sockaddr *)(&server_sockaddr),
             sizeof( server_sockaddr ) );
