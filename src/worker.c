@@ -14,7 +14,7 @@
 
 int client_socket;
 
-static void my_sig( int signo ) {
+static void worker_sig_term_catcher( int signo ) {
     if( client_socket >= 0 ) {
         shutdown( client_socket, SHUT_RDWR );
         close( client_socket );
@@ -47,6 +47,10 @@ static int send_header( int http_code ) {
 static char *get_file_name() {
     char *buf = (char*)malloc( REQ_BUF_SZ );
     ssize_t num_read = recv( client_socket, buf, REQ_BUF_SZ, MSG_NOSIGNAL );
+    if( num_read < 3 ) {
+        free( buf );
+        return NULL;
+    }
     char *space1 = index( buf, ' ' );
     while( ' ' == *(++space1) && space1 < buf + REQ_BUF_SZ );
     while( '/' == *space1 && space1 < buf + REQ_BUF_SZ ) 
@@ -66,6 +70,11 @@ static char *get_file_name() {
 }
 
 void work( int control_socket, int worker_number ) {
+    signal( SIGINT,  worker_sig_term_catcher );
+    signal( SIGTERM, worker_sig_term_catcher );
+    signal( SIGSEGV, worker_sig_term_catcher );
+    signal( SIGPIPE, worker_sig_term_catcher );
+
     while( 1 ) { 
         char ready_code = 1;
         send( control_socket, &ready_code, 1, MSG_NOSIGNAL );
@@ -103,6 +112,7 @@ void work( int control_socket, int worker_number ) {
         free( req_file_name );
         shutdown( client_socket, SHUT_RDWR );
         close( client_socket );
+        client_socket = -1; // for signal processing in worker_sig_term_catcher
     }
 }
 

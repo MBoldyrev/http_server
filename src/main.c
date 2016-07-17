@@ -196,8 +196,8 @@ int main( int argc, char **argv ) {
     signal( SIGINT,  master_sig_term_catcher );
     signal( SIGTERM, master_sig_term_catcher );
     signal( SIGSEGV, master_sig_term_catcher );
-    signal( SIGCHLD, master_sig_chld_catcher );
     signal( SIGPIPE, master_sig_term_catcher );
+    signal( SIGCHLD, master_sig_chld_catcher );
     listen( server_socket, SOMAXCONN );
 
     ev_io_init( &server_socket_listener,
