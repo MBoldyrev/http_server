@@ -100,6 +100,8 @@ server_socket_read_cb( struct ev_loop *loop, ev_io *w, int revents ) {
 
 
 int main( int argc, char **argv ) {
+    signal( SIGHUP,  SIG_IGN );
+
     int option;
     char correct_invocation = 3;
 	opterr = 0;
