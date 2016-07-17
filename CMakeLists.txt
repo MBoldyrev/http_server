@@ -4,7 +4,7 @@ set(PROJECT server)
 
 project (${PROJECT})
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99 -Wall -Wfatal-errors -lev -g")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99 -Wall -Wfatal-errors -g")
 
 set (HEADERS
     src/fd_pass.h
@@ -20,3 +20,5 @@ set (SOURCES
 #source_group ("Source Files" FILES ${SOURCES})
 
 add_executable (${PROJECT} ${HEADERS} ${SOURCES})
+
+target_link_libraries(server ev)
