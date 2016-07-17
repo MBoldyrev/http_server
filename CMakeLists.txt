@@ -19,6 +19,6 @@ set (SOURCES
 #source_group ("Header Files" FILES ${HEADERS})
 #source_group ("Source Files" FILES ${SOURCES})
 
-add_executable (${PROJECT} ${HEADERS} ${SOURCES})
+add_executable (final ${HEADERS} ${SOURCES})
 
-target_link_libraries(server ev)
+target_link_libraries(final ev)
