@@ -23,22 +23,23 @@ static void worker_sig_term_catcher( int signo ) {
     exit(0);
 }
 
-static int send_header( int http_code ) {
+static int send_header( int http_code, unsigned long content_length ) {
     char *ans = (char*)malloc( REQ_BUF_SZ );
     strcpy( ans, "HTTP/1.0 " );
     switch( http_code ) {
         case 200:
-            strcat( ans, "200 OK\n" );
+            strcat( ans, "200 OK\r\n" );
             break;
         case 404:
-            strcat( ans, "404 Not Found\n" );
+            strcat( ans, "404 Not Found\r\n" );
             break;
         default:
-            strcat( ans, "500 Internal Server Error\n" );
+            strcat( ans, "500 Internal Server Error\r\n" );
             break;
     }
-    strcat( ans, "Content-Type: text/html\n" );
-    strcat( ans, "\n" );
+    sprintf( ans + strlen( ans ), "Content-length: %lu\r\n", content_length );
+    strcat( ans, "Content-Type: text/html\r\n" );
+    strcat( ans, "\r\n" );
     ans[ ANS_BUF_SZ - 1 ] = 0;
     if( -1 == send( client_socket, ans, strlen(ans), MSG_NOSIGNAL ) )
         return -1;
@@ -55,9 +56,12 @@ static char *get_file_name() {
     char *space1 = index( buf, ' ' );
     while( ' ' == *(++space1) && space1 < buf + REQ_BUF_SZ );
     while( '/' == *space1 && space1 < buf + REQ_BUF_SZ ) 
-        ++space1;
+        ++space1; // skip starting slashes
     if( space1 != NULL && ( space1 - buf ) + 3 < REQ_BUF_SZ ) {
         char *space2 = index( space1, ' ' );
+        char *special = index( space1, '?' );
+        if( special != NULL && special < space2 || space2 == NULL )
+            space2 = special;
         if( space2 != NULL ) {
             *space2 = 0;
             strcpy( buf, space1 );
@@ -90,13 +94,16 @@ void work( int control_socket, int worker_number ) {
         char *req_file_name = get_file_name( client_socket );
         if( req_file_name == NULL ) {
             fprintf( logfile, "Requested file not found! (404)\n" );
-            send_header( 404 );
+            send_header( 404, 0 );
             return;
         }
         FILE *req_file = fopen( req_file_name, "r" );
         if( req_file != NULL ) {
+            fseek( req_file, 0L, SEEK_END );
+            unsigned long fsize = ftell( req_file );
+            rewind( req_file );
             fprintf( logfile, "Sending the file (200)\n" );
-            send_header( 200 );
+            send_header( 200, fsize );
             char *buf = (char*)malloc( FILE_READ_BUF_SZ );
             size_t num_read;
             while( 0 != ( num_read = 
@@ -108,7 +115,7 @@ void work( int control_socket, int worker_number ) {
         }
         else {
             fprintf( logfile, "Requested file not found! (404)\n" );
-            send_header( 404 );
+            send_header( 404, 0 );
         }
         free( req_file_name );
         shutdown( client_socket, SHUT_RDWR );
