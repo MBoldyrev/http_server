@@ -24,7 +24,7 @@ static void worker_sig_term_catcher( int signo ) {
 }
 
 static int send_header( int http_code, unsigned long content_length ) {
-    char *ans = (char*)malloc( REQ_BUF_SZ );
+    char *ans = (char*)malloc( ANS_BUF_SZ );
     strcpy( ans, "HTTP/1.0 " );
     switch( http_code ) {
         case 200:
@@ -53,18 +53,19 @@ static char *get_file_name() {
         free( buf );
         return NULL;
     }
+    *( buf + num_read ) = 0;
     char *space1 = index( buf, ' ' );
-    while( ' ' == *(++space1) && space1 < buf + REQ_BUF_SZ );
-    while( '/' == *space1 && space1 < buf + REQ_BUF_SZ ) 
+    while( ' ' == *(++space1) && space1 < buf + num_read );
+    while( '/' == *space1 && space1 < buf + num_read )
         ++space1; // skip starting slashes
-    if( space1 != NULL && ( space1 - buf ) + 3 < REQ_BUF_SZ ) {
+    if( space1 != NULL && ( space1 - buf ) + 3 < num_read ) {
         char *space2 = index( space1, ' ' );
         char *special = index( space1, '?' );
         if( special != NULL && special < space2 || space2 == NULL )
             space2 = special;
         if( space2 != NULL ) {
             *space2 = 0;
-            strcpy( buf, space1 );
+            memmove( buf, space1, space2 - space1 + 1 );
             fprintf( logfile, "Requested file: %s\n", buf );
             return buf;
 
